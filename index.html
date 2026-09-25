@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PixelGuardian</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1 class="title">Pixel<span class="title__accent">Guardian</span></h1>
+  <p class="subtitle">Защити сектор от вторжения</p>
+
+  <!-- Стадия: рамка + сам холст. Игра целиком рисуется внутри canvas. -->
+  <div class="stage">
+    <canvas id="game" width="800" height="600">
+      Ваш браузер не поддерживает элемент &lt;canvas&gt;. Обновите браузер.
+    </canvas>
+  </div>
+
+  <!-- Короткая легенда управления -->
+  <ul class="controls">
+    <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> или <kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> — движение</li>
+    <li>Мышь — прицел, <b>ЛКМ</b> — стрельба (удерживайте для авто-огня)</li>
+    <li>Бонусы: зелёная аптечка — +1 жизнь, жёлтая стрелка — усиление выстрела</li>
+    <li><kbd>P</kbd> — пауза, <kbd>R</kbd> — рестарт, <kbd>M</kbd> — звук вкл/выкл</li>
+  </ul>
+
+  <script src="game.js"></script>
+</body>
+</html>

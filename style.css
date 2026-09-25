@@ -1,0 +1,162 @@
+/* ==========================================================================
+   PixelGuardian — оформление страницы
+   Тёмный ретро-фон, объёмная «пиксельная» рамка вокруг холста, центрирование.
+   ========================================================================== */
+
+/* --- Палитра в одном месте --- */
+:root {
+  --bg:          #05070f;   /* фон страницы */
+  --bg-glow:     #16224a;   /* свечение сверху */
+  --frame-dark:  #0a1020;   /* тёмный слой рамки */
+  --frame-blue:  #2f7fd6;   /* яркий слой рамки */
+  --frame-deep:  #17356b;   /* внешний слой рамки */
+  --canvas-bg:   #0b1224;   /* фон игрового поля */
+  --text:        #cfe0ff;
+  --text-dim:    #7d8db3;
+  --accent:      #7fd4ff;
+  --accent-warm: #ffe66d;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  padding: 32px 16px;
+  min-height: 100vh;
+
+  /* Центрируем содержимое и по горизонтали, и по вертикали */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+
+  font-family: "Consolas", "Courier New", monospace;
+  color: var(--text);
+  background-color: var(--bg);
+
+  /* Свечение сверху + «пиксельная» сетка на фоне */
+  background-image:
+    radial-gradient(circle at 50% 0%, var(--bg-glow) 0%, transparent 55%),
+    linear-gradient(rgba(90, 140, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(90, 140, 255, 0.05) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+/* --- Заголовок игры --- */
+.title {
+  margin: 0;
+  font-size: clamp(22px, 4vw, 40px);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  /* «Объёмная» пиксельная тень + неоновое свечение */
+  text-shadow: 0 0 10px rgba(127, 212, 255, 0.55), 0 4px 0 #0b2a4a;
+  user-select: none;
+}
+
+.title__accent {
+  color: var(--accent-warm);
+  text-shadow: 0 0 10px rgba(255, 230, 109, 0.5), 0 4px 0 #4a3c0b;
+}
+
+.subtitle {
+  margin: -8px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+/* --- Сцена: пиксельная рамка вокруг холста --- */
+.stage {
+  position: relative;
+  padding: 10px;
+  max-width: 100%;
+  background: linear-gradient(180deg, #1b2645 0%, #0f1730 100%);
+
+  /* Несколько слоёв box-shadow рисуют рамку «как в старых играх»:
+     тёмный контур -> цветной контур -> тёмный контур -> внешний контур + свечение */
+  box-shadow:
+    0 0 0 4px  var(--frame-dark),
+    0 0 0 8px  var(--frame-blue),
+    0 0 0 12px var(--frame-dark),
+    0 0 0 16px var(--frame-deep),
+    0 0 46px rgba(58, 160, 255, 0.38);
+
+  image-rendering: pixelated;
+}
+
+/* Тонкие «строки развёртки» поверх игрового поля — усиливают ретро-эффект.
+   pointer-events: none, чтобы клики проходили к холсту. */
+.stage::after {
+  content: "";
+  position: absolute;
+  inset: 10px; /* совпадает с padding .stage, то есть слой ложится точно на холст */
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.035) 0 2px,
+    transparent 2px 4px
+  );
+}
+
+/* --- Игровой холст --- */
+canvas {
+  display: block;
+  width: 800px;
+  max-width: 100%;   /* на узких экранах холст аккуратно сжимается */
+  height: auto;      /* пропорции 4:3 сохраняются автоматически */
+  background: var(--canvas-bg);
+  image-rendering: pixelated;
+  cursor: none;      /* вместо курсора на холсте рисуется пиксельный прицел */
+  touch-action: none; /* отключаем жесты браузера поверх игры */
+}
+
+/* --- Легенда управления --- */
+.controls {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 20px;
+  max-width: 900px;
+  font-size: 12px;
+  text-align: center;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.controls b { color: var(--text); }
+
+/* «Пиксельная» клавиша-кнопка */
+kbd {
+  display: inline-block;
+  min-width: 20px;
+  margin: 0 1px;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--text);
+  background: #131c33;
+  border: 1px solid #2b3c66;
+  border-bottom-width: 3px; /* объём снизу — клавиша выглядит выпуклой */
+  border-radius: 2px;
+}
+
+/* --- Адаптив для небольших экранов --- */
+@media (max-width: 640px) {
+  body { padding: 20px 10px; gap: 14px; }
+
+  .stage { padding: 6px; }
+  .stage::after { inset: 6px; }
+
+  .controls { font-size: 11px; gap: 6px 14px; }
+}
