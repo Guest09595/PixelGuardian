@@ -32,7 +32,14 @@ html, body {
 
   overflow: hidden;            /* страница не прокручивается ни в одну сторону */
   overscroll-behavior: none;   /* нет «резиновой» прокрутки и pull-to-refresh */
-  touch-action: none;          /* палец не скроллит и не масштабирует страницу */
+
+  /* ВАЖНО: здесь НЕ ставим touch-action: none!
+     Браузер считает эффективное значение как пересечение touch-action
+     элемента и всех его предков. У потомка с `none` на предке синтетический
+     click не генерируется — и кнопка «Полный экран» перестала бы работать
+     на телефоне. Поэтому скролл мы гасим через overflow/position, а жесты —
+     точечно на самом игровом поле. */
+  touch-action: manipulation;   /* зум щипком запрещён, но тапы работают */
 
   -webkit-user-select: none;   /* не выделяем текст долгим нажатием */
   user-select: none;
@@ -54,6 +61,8 @@ body {
   justify-content: center;
   gap: 14px;
 
+  /* Шапка, подпись и кнопка не сжимаются — иначе кнопка «Полный экран»
+     выдавило бы за пределы экрана и стала бы недоступной для нажатия. */
   font-family: "Consolas", "Courier New", monospace;
   color: var(--text);
   background-color: var(--bg);
@@ -84,6 +93,14 @@ body {
   user-select: none;
 }
 
+/* Заголовок и подпись не сжимаются — холст уступает им место, а не наоборот. */
+.title,
+.subtitle,
+.fs-button,
+.controls {
+  flex: 0 0 auto;
+}
+
 .title__accent {
   color: var(--accent-warm);
   text-shadow: 0 0 10px rgba(255, 230, 109, 0.5), 0 4px 0 #4a3c0b;
@@ -103,6 +120,10 @@ body {
   position: relative;
   padding: 10px;
   max-width: 100%;
+
+  /* Игровое поле — единственное место, где жесты гасятся полностью:
+     джойстик должен вести корабль, а не тянуть страницу. */
+  touch-action: none;
   background: linear-gradient(180deg, #1b2645 0%, #0f1730 100%);
 
   /* Несколько слоёв box-shadow рисуют рамку «как в старых играх»:
@@ -219,6 +240,11 @@ kbd {
 
 .fs-button:active { transform: translateY(1px); }
 
+/* ВАЖНО: авторский `display` перебивает [hidden] { display: none } из
+   стандартной таблицы стилей браузера. Без этого правила кнопка оставалась
+   бы видимой даже при button.hidden = true. */
+.fs-button[hidden] { display: none; }
+
 /* На телефоне легенда управления не помещается — прячем её,
    чтобы поле получило максимум высоты экрана. */
 @media (max-width: 760px), (pointer: coarse) {
@@ -262,6 +288,43 @@ canvas:-webkit-full-screen {
   max-width: none;
   max-height: none;
   object-fit: contain;
+}
+
+/* --- Псевдо-полный экран (запасной вариант) ---
+   iOS Safari и ряд других браузеров запрещают Fullscreen API для веб-страниц.
+   Тогда класс .is-pseudo-fullscreen растягивает документ на весь видимый
+   экран (100vw x 100vh) и прячет обвязку — игра всё равно оказывается
+   на весь экран, просто без «настоящего» fullscreen. */
+html.is-pseudo-fullscreen,
+body.is-pseudo-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  overflow: hidden;
+  background: var(--bg);
+
+  /* Учитываем «чёлку» и жестовую полосу снизу. */
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* В псевдо-режиме скрываем всё, кроме игры и кнопки выхода. */
+html.is-pseudo-fullscreen .title,
+html.is-pseudo-fullscreen .subtitle,
+html.is-pseudo-fullscreen .controls,
+body.is-pseudo-fullscreen .title,
+body.is-pseudo-fullscreen .subtitle,
+body.is-pseudo-fullscreen .controls {
+  display: none;
+}
+
+html.is-pseudo-fullscreen .stage,
+body.is-pseudo-fullscreen .stage {
+  max-width: 100vw;
+  max-height: 100vh;
 }
 
 /* --- Адаптив для небольших экранов --- */

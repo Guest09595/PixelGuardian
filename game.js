@@ -1815,51 +1815,132 @@ document.addEventListener('contextmenu', (event) => {
  * игра занимает весь экран. API немного отличается в разных браузерах,
  * поэтому поддерживаем и стандартные имена, и старые префиксы Safari.
  */
+/** Класс «псевдо-полного экрана» — запасной вариант, когда API запрещён. */
+const PSEUDO_FULLSCREEN_CLASS = 'is-pseudo-fullscreen';
+
+/** Защита от двойного срабатывания (touchend + синтетический click). */
+const FULLSCREEN_TOGGLE_GUARD_MS = 600;
+
+/*
+ * Полный экран на телефоне убирает адресную строку и панель браузера.
+ * Имена методов отличаются от браузера к браузеру, поэтому перебираем
+ * все известные варианты, а не только стандартный.
+ */
 const fullscreenApi = {
-  /** Элемент, который умеет развернуть страницу. */
+  /** Методы входа во весь экран (в т.ч. старые Safari / Firefox / IE). */
+  REQUEST_NAMES: [
+    'requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen',
+    'mozRequestFullScreen', 'msRequestFullscreen',
+  ],
+
+  /** Методы выхода из полного экрана. */
+  EXIT_NAMES: [
+    'exitFullscreen', 'webkitExitFullscreen', 'webkitCancelFullScreen',
+    'mozCancelFullScreen', 'msExitFullscreen',
+  ],
+
+  /** Свойства с элементом, который сейчас развёрнут на весь экран. */
+  ELEMENT_NAMES: [
+    'fullscreenElement', 'webkitFullscreenElement',
+    'webkitCurrentFullScreenElement', 'msFullscreenElement',
+  ],
+
+  /** Нативный полноэкранный элемент (или null). */
   get element() {
-    return document.fullscreenElement ||
-      document.webkitFullscreenElement ||
-      document.msFullscreenElement || null;
+    for (const name of this.ELEMENT_NAMES) {
+      if (document[name]) return document[name];
+    }
+    return null;
   },
 
-  /** Поддерживается ли полный экран в этом браузере вообще. */
-  supported() {
-    return !!(document.documentElement.requestFullscreen ||
-      document.documentElement.webkitRequestFullscreen ||
-      document.documentElement.msRequestFullscreen);
-  },
-
-  /** Включён ли полный экран прямо сейчас. */
-  active() { return !!this.element; },
-
-  /** Разворачивает страницу на весь экран. */
-  enter() {
+  /** Нативный метод входа, привязанный к documentElement (или null). */
+  requestFn() {
     const root = document.documentElement;
-    const request = root.requestFullscreen ||
-      root.webkitRequestFullscreen ||
-      root.msRequestFullscreen;
-    if (!request) return false;
+    for (const name of this.REQUEST_NAMES) {
+      if (typeof root[name] === 'function') return root[name].bind(root);
+    }
+    return null;
+  },
 
-    // Вход возможен только из пользовательского жеста, поэтому вызываем
-    // напрямую внутри обработчика. Ошибки (запрет браузера) не роняют игру.
+  /** Нативный метод выхода, привязанный к document (или null). */
+  exitFn() {
+    for (const name of this.EXIT_NAMES) {
+      if (typeof document[name] === 'function') return document[name].bind(document);
+    }
+    return null;
+  },
+
+  /** Умеет ли браузер нативный полный экран. */
+  supported() { return this.requestFn() !== null; },
+
+  /** Активен ли полноэкранный режим — нативный или псевдо-. */
+  active() {
+    return !!this.element ||
+      document.body.classList.contains(PSEUDO_FULLSCREEN_CLASS);
+  },
+
+  /**
+   * Запасной режим для iOS Safari и прочих браузеров, которые запрещают
+   * Fullscreen API для обычных веб-страниц. Прячем обвязку и растягиваем
+   * игру через CSS на весь видимый экран (100vw x 100vh).
+   */
+  enterFallback() {
+    document.documentElement.classList.add(PSEUDO_FULLSCREEN_CLASS);
+    document.body.classList.add(PSEUDO_FULLSCREEN_CLASS);
+
+    // Если телефон умеет фиксировать ориентацию — попробуем занять весь экран.
     try {
-      const result = request.call(root);
-      if (result && typeof result.catch === 'function') result.catch(() => {});
+      if (screen.orientation && typeof screen.orientation.lock === 'function') {
+        const locked = screen.orientation.lock('any');
+        if (locked && typeof locked.catch === 'function') locked.catch(() => {});
+      }
     } catch (error) {
-      // Браузер может запретить полный экран — просто играем без него.
+      // Ориентацию зафиксировать нельзя — играем в текущей.
     }
     return true;
   },
 
-  /** Выходит из полного экрана. */
-  exit() {
-    const exit = document.exitFullscreen ||
-      document.webkitExitFullscreen ||
-      document.msExitFullscreen;
-    if (!exit || !this.active()) return false;
+  /** Снимает псевдо-полный экран. */
+  exitFallback() {
+    document.documentElement.classList.remove(PSEUDO_FULLSCREEN_CLASS);
+    document.body.classList.remove(PSEUDO_FULLSCREEN_CLASS);
     try {
-      const result = exit.call(document);
+      if (screen.orientation && typeof screen.orientation.unlock === 'function') {
+        screen.orientation.unlock();
+      }
+    } catch (error) {
+      // Ничего страшного.
+    }
+  },
+
+  /**
+   * Включает полный экран. Вызывать строго из пользовательского жеста
+   * (тап/клик), иначе браузер откажет по политике user activation.
+   */
+  enter() {
+    const request = this.requestFn();
+    if (!request) return this.enterFallback();   // iOS Safari и подобные
+
+    try {
+      const result = request();
+      // Отказ приходит асинхронно — тогда тоже включаем запасной режим,
+      // чтобы пользователь точно получил развёрнутую игру, а ничего.
+      if (result && typeof result.catch === 'function') {
+        result.catch(() => this.enterFallback());
+      }
+      return true;
+    } catch (error) {
+      return this.enterFallback();
+    }
+  },
+
+  /** Выходит из полного экрана (и из псевдо-, если он включён). */
+  exit() {
+    this.exitFallback();
+    const exit = this.exitFn();
+    if (!exit || !this.element) return false;
+    try {
+      const result = exit();
       if (result && typeof result.catch === 'function') result.catch(() => {});
     } catch (error) {
       // Выход может быть недоступен — игнорируем.
@@ -1887,17 +1968,13 @@ function fullscreenLabel() {
   return fullscreenApi.active() ? '⛶ Выйти из полного экрана' : '⛶ Полный экран';
 }
 
-/** Показывает или прячет DOM-кнопку полного экрана. */
+/** Показывает кнопку и обновляет её подпись под текущее состояние. */
 function syncFullscreenButton() {
   const button = document.getElementById('fsButton');
   if (!button) return;
 
-  // Без поддержки API кнопка бессмысленна — не показываем её.
-  if (!fullscreenApi.supported()) {
-    button.hidden = true;
-    return;
-  }
-
+  // Кнопка нужна всегда: даже без нативного API она включает
+  // псевдо-полный экран, то есть игра всё равно развернётся.
   button.hidden = false;
   button.textContent = fullscreenLabel();
 }
@@ -1907,23 +1984,45 @@ function onFullscreenChange() {
   syncFullscreenButton();
 }
 
-for (const type of ['fullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange']) {
+for (const type of ['fullscreenchange', 'webkitfullscreenchange', 'webkitfullscreenerror',
+  'MSFullscreenChange']) {
   document.addEventListener(type, onFullscreenChange);
 }
 
 // Появление полного экрана на телефоне: первый же тап уводит игру в него.
 canvas.addEventListener('pointerdown', requestFullscreenOnce, { passive: true });
 
-// Кнопка «Полный экран» внизу страницы — ручной вход/выход на любом устройстве.
+/** Метка последнего переключения — защита от двойного срабатывания. */
+let lastFullscreenToggle = 0;
+
+/**
+ * Единая точка входа для кнопки «Полный экран».
+ *
+ * Обрабатываются и touchend, и click: первый срабатывает на телефоне
+ * быстрее, второй — на компьютере. Пауза FULLSCREEN_TOGGLE_GUARD_MS не даёт
+ * двум событиям подряд включить и сразу выключить режим.
+ */
+function handleFullscreenToggle() {
+  const now = performance.now();
+  if (now - lastFullscreenToggle < FULLSCREEN_TOGGLE_GUARD_MS) return;
+  lastFullscreenToggle = now;
+
+  try {
+    sound.unlock();      // жест пользователя — разрешаем звук
+  } catch (error) {
+    // Звук не критичен: полный экран всё равно включаем.
+  }
+
+  fullscreenApi.toggle();
+  syncFullscreenButton();
+}
+
+// Прямые обработчики на самой кнопке. Никакой перехват preventDefault()
+// не мешает: requestFullscreen вызывается напрямую из пользовательского жеста.
 const fsButton = document.getElementById('fsButton');
 if (fsButton) {
-  fsButton.addEventListener('click', () => {
-    sound.unlock();   // жест пользователя — разрешаем звук
-    fullscreenApi.toggle();
-    // Мгновенно подстраиваем подпись, а позже уточним её по fullscreenchange:
-    // так кнопка не «мигает» старым текстом, пока браузер переключает режим.
-    syncFullscreenButton();
-  });
+  fsButton.addEventListener('touchend', handleFullscreenToggle, { passive: true });
+  fsButton.addEventListener('click', handleFullscreenToggle);
 }
 
 /* ============== 8. ЭКРАННОЕ УПРАВЛЕНИЕ ДЛЯ ТЕЛЕФОНА ======================= */
