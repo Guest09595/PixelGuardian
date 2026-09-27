@@ -3,9 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <!-- width=device-width + запрет случайного масштабирования: на телефоне
-       игра должна занимать весь экран, а не «щипаться» пальцами. -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+       игра должна занимать весь экран, а не «щипаться» пальцами.
+       viewport-fit=cover нужен, чтобы canvas доходил до краёв под «чёлкой». -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#05070f">
+  <!-- Полноэкранный режим при запуске на мобильных: без адресной строки,
+       с собственным названием окна и без зума по двойному тапу. -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PixelGuardian">
+  <meta name="format-detection" content="telephone=no">
   <title>PixelGuardian</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -19,6 +27,11 @@
       Ваш браузер не поддерживает элемент &lt;canvas&gt;. Обновите браузер.
     </canvas>
   </div>
+
+  <!-- Выход в полноэкранный режим: прячет адресную строку и панель браузера.
+       Кнопка обычная DOM-кнопка, потому что рисуется средствами страницы,
+       а не внутри игрового холста. -->
+  <button class="fs-button" id="fsButton" type="button" hidden>⛶ Полный экран</button>
 
   <!-- Короткая легенда управления -->
   <ul class="controls">

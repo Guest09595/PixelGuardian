@@ -1585,6 +1585,7 @@ const state = {
   aimX: CANVAS_WIDTH / 2,   // куда сейчас летят снаряды (для прицела)
   aimY: CANVAS_HEIGHT / 2,
   touchHint: 0,      // сколько секунд ещё висит подсказка про джойстик
+  fullscreenTried: false, // пробовали ли уже уйти в полный экран автоматически
 };
 
 /** Похоже ли устройство на телефон или планшет. */
@@ -1676,6 +1677,12 @@ function handleKeyPress(event) {
     return;
   }
 
+  // Полный экран — на любом экране игры (удобно на компьютере).
+  if (code === 'KeyF') {
+    fullscreenApi.toggle();
+    return;
+  }
+
   if (state.screen === 'playing') {
     if (code === 'KeyP' || code === 'Escape') setScreen('paused');
     else if (code === 'KeyR') { resetGame(); setScreen('playing'); }
@@ -1753,6 +1760,171 @@ window.addEventListener('pointerup', (event) => {
 window.addEventListener('pointercancel', (event) => touchControls.pointerUp(event));
 canvas.addEventListener('pointerleave', () => { mouse.down = false; });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+/* ------------------------- Блокировка жестов браузера ---------------------- */
+
+/**
+ * Страница — это приложение, а не документ. Если не отменить стандартное
+ * поведение браузера, палец на джойстике одновременно «тянет» страницу:
+ * она скроллится, «оттягивается», а на некоторых телефонах срабатывает
+ * зум или «оттягивание» для обновления страницы.
+ *
+ * Важно: обработчики вешаем с { passive: false } — иначе браузер
+ * проигнорирует preventDefault() ради своей скорости.
+ */
+function blockBrowserGesture(event) {
+  if (event.cancelable) event.preventDefault();
+}
+
+// touchmove — главный виновник скролла при движении пальцем по джойстику.
+// touchstart — чтобы не начинался жест «оттянуть страницу»/зум.
+// touchend/touchcancel — чтобы жест не «дотягивался» после отпускания.
+for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
+  canvas.addEventListener(type, blockBrowserGesture, { passive: false });
+}
+
+// Двойной тап по холсту иначе зумит страницу (не сработает preventDefault).
+canvas.addEventListener('dblclick', blockBrowserGesture, { passive: false });
+
+// На всякий случай гасим скролл и на уровне документа: палец может попасть
+// мимо холста (рамка, фон) и потянуть страницу целиком.
+//
+// ВАЖНО: preventDefault() на touchstart отменяет синтез «click», поэтому
+// интерактивные элементы (кнопка полного экрана) пропускаем — иначе они
+// просто не нажимались бы на телефоне.
+function blockDocumentGesture(event) {
+  const target = event.target;
+  if (target && target.closest && target.closest('button, a, input, select')) return;
+  blockBrowserGesture(event);
+}
+
+for (const type of ['touchmove', 'touchstart']) {
+  document.addEventListener(type, blockDocumentGesture, { passive: false });
+}
+
+// Некоторые мобильные браузеры подсвечивают область касания и вызывают
+// контекстное меню по долгому нажатию — тоже отключаем.
+document.addEventListener('contextmenu', (event) => {
+  if (state.touch) event.preventDefault();
+});
+
+/* =============== 7a. ПОЛНОЭКРАННЫЙ РЕЖИМ И СКРЫТИЕ АДРЕСНОЙ СТРОКИ ======== */
+
+/*
+ * Полный экран на телефоне убирает адресную строку и панель браузера —
+ * игра занимает весь экран. API немного отличается в разных браузерах,
+ * поэтому поддерживаем и стандартные имена, и старые префиксы Safari.
+ */
+const fullscreenApi = {
+  /** Элемент, который умеет развернуть страницу. */
+  get element() {
+    return document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.msFullscreenElement || null;
+  },
+
+  /** Поддерживается ли полный экран в этом браузере вообще. */
+  supported() {
+    return !!(document.documentElement.requestFullscreen ||
+      document.documentElement.webkitRequestFullscreen ||
+      document.documentElement.msRequestFullscreen);
+  },
+
+  /** Включён ли полный экран прямо сейчас. */
+  active() { return !!this.element; },
+
+  /** Разворачивает страницу на весь экран. */
+  enter() {
+    const root = document.documentElement;
+    const request = root.requestFullscreen ||
+      root.webkitRequestFullscreen ||
+      root.msRequestFullscreen;
+    if (!request) return false;
+
+    // Вход возможен только из пользовательского жеста, поэтому вызываем
+    // напрямую внутри обработчика. Ошибки (запрет браузера) не роняют игру.
+    try {
+      const result = request.call(root);
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+    } catch (error) {
+      // Браузер может запретить полный экран — просто играем без него.
+    }
+    return true;
+  },
+
+  /** Выходит из полного экрана. */
+  exit() {
+    const exit = document.exitFullscreen ||
+      document.webkitExitFullscreen ||
+      document.msExitFullscreen;
+    if (!exit || !this.active()) return false;
+    try {
+      const result = exit.call(document);
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+    } catch (error) {
+      // Выход может быть недоступен — игнорируем.
+    }
+    return true;
+  },
+
+  /** Переключает режим: вошли — выходим, и наоборот. */
+  toggle() { return this.active() ? this.exit() : this.enter(); },
+};
+
+/**
+ * Пытается один раз автоматически уйти в полный экран на телефоне.
+ * Вызывать нужно из пользовательского жеста (тапа), иначе браузер запретит.
+ * Флаг гарантирует, что «навязчивый» запрос повторится ровно один раз.
+ */
+function requestFullscreenOnce() {
+  if (state.fullscreenTried) return;
+  state.fullscreenTried = true;
+  if (state.touch) fullscreenApi.enter();
+}
+
+/** Подпись кнопки полного экрана под текущее состояние. */
+function fullscreenLabel() {
+  return fullscreenApi.active() ? '⛶ Выйти из полного экрана' : '⛶ Полный экран';
+}
+
+/** Показывает или прячет DOM-кнопку полного экрана. */
+function syncFullscreenButton() {
+  const button = document.getElementById('fsButton');
+  if (!button) return;
+
+  // Без поддержки API кнопка бессмысленна — не показываем её.
+  if (!fullscreenApi.supported()) {
+    button.hidden = true;
+    return;
+  }
+
+  button.hidden = false;
+  button.textContent = fullscreenLabel();
+}
+
+/** Реакция на смену полноэкранного режима: обновляем подпись на кнопке. */
+function onFullscreenChange() {
+  syncFullscreenButton();
+}
+
+for (const type of ['fullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange']) {
+  document.addEventListener(type, onFullscreenChange);
+}
+
+// Появление полного экрана на телефоне: первый же тап уводит игру в него.
+canvas.addEventListener('pointerdown', requestFullscreenOnce, { passive: true });
+
+// Кнопка «Полный экран» внизу страницы — ручной вход/выход на любом устройстве.
+const fsButton = document.getElementById('fsButton');
+if (fsButton) {
+  fsButton.addEventListener('click', () => {
+    sound.unlock();   // жест пользователя — разрешаем звук
+    fullscreenApi.toggle();
+    // Мгновенно подстраиваем подпись, а позже уточним её по fullscreenchange:
+    // так кнопка не «мигает» старым текстом, пока браузер переключает режим.
+    syncFullscreenButton();
+  });
+}
 
 /* ============== 8. ЭКРАННОЕ УПРАВЛЕНИЕ ДЛЯ ТЕЛЕФОНА ======================= */
 
@@ -3047,4 +3219,5 @@ bakeTouchArt();                     // готовим картинки экра�
 space.reset();                      // запекаем космос: туманности, планеты, звёзды
 resetGame();                        // создаём стража и обнуляем счёт
 setScreen('menu');                  // стартуем с главного меню
+syncFullscreenButton();             // показываем кнопку полного экрана, если API есть
 requestAnimationFrame(gameLoop);    // запускаем цикл

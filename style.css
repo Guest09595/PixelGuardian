@@ -19,19 +19,40 @@
 
 * { box-sizing: border-box; }
 
-html, body { height: 100%; }
+/* --------------------------------------------------------------------------
+   Блокировка прокрутки и жестов браузера.
+   Игровое поле — это приложение, а не документ: его нельзя скроллить,
+   щипать (зум) или «оттягивать». Поэтому жесты гасим на корне страницы,
+   а саму страницу «прибиваем» к экрану через position: fixed.
+   -------------------------------------------------------------------------- */
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+
+  overflow: hidden;            /* страница не прокручивается ни в одну сторону */
+  overscroll-behavior: none;   /* нет «резиновой» прокрутки и pull-to-refresh */
+  touch-action: none;          /* палец не скроллит и не масштабирует страницу */
+
+  -webkit-user-select: none;   /* не выделяем текст долгим нажатием */
+  user-select: none;
+  -webkit-touch-callout: none; /* системное меню по долгому нажатию отключено */
+  -webkit-tap-highlight-color: transparent; /* без серой вспышки при тапе */
+}
 
 body {
-  margin: 0;
-  padding: 32px 16px;
-  min-height: 100vh;
+  /* Страница зафиксирована на экране: физически некуда уехать даже при
+     попытке потянуть палец — браузеру нечего прокручивать. */
+  position: fixed;
+  inset: 0;
 
-  /* Центрируем содержимое и по горизонтали, и по вертикали */
+  padding: 24px 12px;
+
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
+  gap: 14px;
 
   font-family: "Consolas", "Courier New", monospace;
   color: var(--text);
@@ -44,8 +65,12 @@ body {
     linear-gradient(90deg, rgba(90, 140, 255, 0.05) 1px, transparent 1px);
   background-size: 100% 100%, 32px 32px, 32px 32px;
   background-attachment: fixed;
-  overflow-x: hidden;
 }
+
+/* Высота, которую занимает «обвязка» (заголовок, подзаголовок, легенда).
+   Из неё вычитается максимальная высота холста, чтобы поле всегда
+   помещалось в экран целиком — прокручивать было нечего. */
+:root { --chrome-h: 200px; }
 
 /* --- Заголовок игры --- */
 .title {
@@ -109,13 +134,23 @@ body {
 /* --- Игровой холст --- */
 canvas {
   display: block;
+
+  /* Поле — «заменяемый» элемент с пропорциями 4:3 (800x600).
+     Ограничиваем сразу по двум осям, чтобы холст всегда целиком
+     помещался в экран: object-fit сжимает картинку, сохраняя пропорции,
+     и странице нечего прокручивать. */
   width: 800px;
-  max-width: 100%;   /* на узких экранах холст аккуратно сжимается */
-  height: auto;      /* пропорции 4:3 сохраняются автоматически */
+  max-width: 100%;
+  height: auto;
+  max-height: calc(100vh - var(--chrome-h));
+  max-height: calc(100dvh - var(--chrome-h)); /* dvh учитывает адресную строку */
+  object-fit: contain;
+  aspect-ratio: 4 / 3;
+
   background: var(--canvas-bg);
   image-rendering: pixelated;
-  cursor: none;      /* вместо курсора на холсте рисуется пиксельный прицел */
-  touch-action: none; /* отключаем жесты браузера поверх игры */
+  cursor: none;         /* вместо курсора на холсте рисуется пиксельный прицел */
+  touch-action: none;   /* жесты браузера внутри поля отключены полностью */
 }
 
 /* --- Легенда управления --- */
@@ -151,9 +186,87 @@ kbd {
   border-radius: 2px;
 }
 
+/* --- Кнопка полноэкранного режима --- */
+.fs-button {
+  /* Кнопка должна быть кликабельной, поэтому жесты для неё НЕ отключаем
+     (в отличие от холста) — иначе событие не дойдёт до обработчика. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+  background: #131c33;
+  border: 2px solid var(--frame-blue);
+  border-radius: 2px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.fs-button:hover,
+.fs-button:focus-visible {
+  color: #fff;
+  background: #1d2b52;
+  border-color: var(--accent);
+  outline: none;
+}
+
+.fs-button:active { transform: translateY(1px); }
+
+/* На телефоне легенда управления не помещается — прячем её,
+   чтобы поле получило максимум высоты экрана. */
+@media (max-width: 760px), (pointer: coarse) {
+  .controls { display: none; }
+  :root { --chrome-h: 130px; }
+}
+
+/* Очень низкие экраны (телефон в альбомной ориентации):
+   убираем заголовок, оставляем только игру. */
+@media (max-height: 480px) {
+  .title, .subtitle { display: none; }
+  :root { --chrome-h: 56px; }
+}
+
+/* --- Полноэкранный режим ---
+   В полноэкранном режиме браузер прячет адресную строку, а обвязка
+   страницы нам только мешает — скрываем её и отдаём поле весь экран. */
+:fullscreen,
+:-webkit-full-screen {
+  background: var(--bg);
+}
+
+:fullscreen .title,
+:fullscreen .subtitle,
+:fullscreen .controls,
+:-webkit-full-screen .title,
+:-webkit-full-screen .subtitle,
+:-webkit-full-screen .controls {
+  display: none;
+}
+
+:fullscreen .stage,
+:-webkit-full-screen .stage {
+  max-width: 100%;
+}
+
+canvas:fullscreen,
+canvas:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+}
+
 /* --- Адаптив для небольших экранов --- */
 @media (max-width: 640px) {
-  body { padding: 20px 10px; gap: 14px; }
+  body { padding: 14px 8px; gap: 10px; }
 
   .stage { padding: 6px; }
   .stage::after { inset: 6px; }
