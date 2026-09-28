@@ -207,7 +207,10 @@ kbd {
   border-radius: 2px;
 }
 
-/* --- Кнопка полноэкранного режима --- */
+/* --- Кнопка полноэкранного режима ---
+   Это компактная иконка в углу экрана: она не должна перекрывать игровое
+   поле, поэтому на телефоне поджимается до квадратика, а во время самой
+   игры (когда поле и так на весь экран) прячется вовсе. */
 .fs-button {
   /* Кнопка должна быть кликабельной, поэтому жесты для неё НЕ отключаем
      (в отличие от холста) — иначе событие не дойдёт до обработчика. */
@@ -216,18 +219,24 @@ kbd {
 
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   font-family: inherit;
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 20px;
+  line-height: 1;
   color: var(--text);
-  background: #131c33;
+  background: rgba(19, 28, 51, .75);
   border: 2px solid var(--frame-blue);
-  border-radius: 2px;
+  border-radius: 8px;
   cursor: pointer;
   user-select: none;
+
+  /* Не перехватываем тапы мимо кнопки. */
+  touch-action: manipulation;
+  position: relative;
+  z-index: 5;
 }
 
 .fs-button:hover,
@@ -239,6 +248,41 @@ kbd {
 }
 
 .fs-button:active { transform: translateY(1px); }
+
+/* Подпись прячем: на иконке она не помещается, но оставляем её
+   для программ экранного доступа и всплывающей подсказки. */
+.fs-button__text {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Во время игры кнопка не нужна — поле занимает весь экран,
+   а иконка всё равно мешала бы попадать по краям поля. */
+body.is-playing .fs-button,
+html.is-playing .fs-button {
+  display: none;
+}
+
+/* В полноэкранном режиме кнопка переезжает в безопасную зону
+   (вне «чёлки» и жестовой полосы) и становится полупрозрачной. */
+html:fullscreen .fs-button,
+html:-webkit-full-screen .fs-button,
+body.is-pseudo-fullscreen .fs-button {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  right: max(10px, env(safe-area-inset-right, 0px));
+  z-index: 10;
+  opacity: .55;
+}
+
+html:fullscreen .fs-button:hover,
+html:fullscreen .fs-button:focus-visible {
+  opacity: 1;
+}
 
 /* ВАЖНО: авторский `display` перебивает [hidden] { display: none } из
    стандартной таблицы стилей браузера. Без этого правила кнопка оставалась
@@ -261,32 +305,76 @@ kbd {
 
 /* --- Полноэкранный режим ---
    В полноэкранном режиме браузер прячет адресную строку, а обвязка
-   страницы нам только мешает — скрываем её и отдаём поле весь экран. */
-:fullscreen,
-:-webkit-full-screen {
+   страницы нам только мешает. Здесь снимаем вообще всё лишнее: отступы,
+   «пиксельную» рамку и тень у сцены — и растягиваем поле на 100vw x 100vh.
+   Пропорции 4:3 сохраняются через object-fit: contain, поэтому картинка
+   не растягивается, а просто занимает максимум доступного места. */
+html:fullscreen,
+html:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
   background: var(--bg);
 }
 
-:fullscreen .title,
-:fullscreen .subtitle,
-:fullscreen .controls,
-:-webkit-full-screen .title,
-:-webkit-full-screen .subtitle,
-:-webkit-full-screen .controls {
+html:fullscreen body,
+html:-webkit-full-screen body,
+body:fullscreen,
+body:-webkit-full-screen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* Заголовок, подпись и легенда в полном экране не нужны. */
+html:fullscreen .title,
+html:fullscreen .subtitle,
+html:fullscreen .controls,
+html:-webkit-full-screen .title,
+html:-webkit-full-screen .subtitle,
+html:-webkit-full-screen .controls {
   display: none;
 }
 
-:fullscreen .stage,
-:-webkit-full-screen .stage {
-  max-width: 100%;
+/* Сцена: без отступов, без «пиксельной» рамки, на весь экран. */
+html:fullscreen .stage,
+html:-webkit-full-screen .stage,
+body:fullscreen .stage,
+body:-webkit-full-screen .stage {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  background: var(--bg);
 }
 
-canvas:fullscreen,
-canvas:-webkit-full-screen {
-  width: 100%;
-  height: 100%;
-  max-width: none;
-  max-height: none;
+/* Скринлайны ложатся ровно на всё поле. */
+html:fullscreen .stage::after,
+html:-webkit-full-screen .stage::after {
+  inset: 0;
+}
+
+/* Поле занимает весь дисплей; object-fit сохраняет пропорции 4:3. */
+html:fullscreen canvas,
+html:-webkit-full-screen canvas,
+body:fullscreen canvas,
+body:-webkit-full-screen canvas {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  min-width: 0;
+  min-height: 0;
+  aspect-ratio: auto;   /* размер задаёт object-fit, а не соотношение сторон */
   object-fit: contain;
 }
 

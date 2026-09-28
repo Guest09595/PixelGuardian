@@ -1715,12 +1715,31 @@ function handleKeyPress(event) {
 
 /* ------------------------------ Мышь и палец ----------------------------- */
 
+/**
+ * Поддерживает ли браузер нативные Touch Events.
+ *
+ * Если да — пальцы обслуживает блок Touch Events ниже: там мультитач
+ * надёжнее, потому что у каждого пальца есть стабильный identifier.
+ * Если нет (старая мышь/планшет) — работаем только через Pointer Events.
+ */
+const supportsTouchEvents = typeof window.TouchEvent === 'function' ||
+  'ontouchstart' in window;
+
+/**
+ * Настоящий палец, а не перо. Такие события обслуживает touch-блок,
+ * поэтому в pointer-обработчиках их пропускаем — иначе один палец
+ * обрабатывался бы дважды, и джойстик дёргался бы.
+ */
+const isFingerTouch = (event) =>
+  event.pointerType === 'touch' && supportsTouchEvents;
+
 canvas.addEventListener('pointermove', (event) => {
   updateMousePosition(event);
 
   if (event.pointerType === 'touch' || event.pointerType === 'pen') {
     state.touchAim = true;                    // целимся автонаведением
-    if (state.touch) touchControls.pointerMove(event);
+    // Настоящие пальцы ведёт touchmove; пером (одна точка) можно и так.
+    if (state.touch && !isFingerTouch(event)) touchControls.pointerMove(event);
     return;
   }
 
@@ -1735,6 +1754,9 @@ canvas.addEventListener('pointerdown', (event) => {
   const point = eventToField(event);
   const isTouch = event.pointerType === 'touch' || event.pointerType === 'pen';
   if (isTouch) state.touchAim = true;
+
+  // Настоящий палец полностью обслуживается Touch Events (см. ниже).
+  if (isFingerTouch(event)) return;
 
   // 1. Экранные кнопки телефона: пауза, огонь и джойстик.
   //    Они перекрывают поле, поэтому проверяются раньше всего.
@@ -1760,6 +1782,35 @@ window.addEventListener('pointerup', (event) => {
 window.addEventListener('pointercancel', (event) => touchControls.pointerUp(event));
 canvas.addEventListener('pointerleave', () => { mouse.down = false; });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+/* ----------------------- Настоящий мультитач (Touch Events) ------------------ */
+
+/*
+ * Pointer Events на телефоне ведут себя капризно: часть браузеров при
+ * быстрых касаниях теряет события, а iOS Safari склонна «схлопывать»
+ * несколько пальцев. Поэтому для касаний мы слушаем нативные Touch Events
+ * и работаем через changedTouches — там каждый палец всегда имеет
+ * собственный стабильный identifier.
+ *
+ * Касание мышью по-прежнему идёт через Pointer Events (см. выше).
+ */
+if (supportsTouchEvents) {
+  canvas.addEventListener('touchstart', (event) => {
+    if (state.touch) state.touchAim = true;    // палец → автонаведение
+    sound.unlock();
+    touchControls.touchStart(event);
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (event) => {
+    touchControls.touchMove(event);
+  }, { passive: false });
+
+  // touchend/touchcancel приходят на canvas, но пальцы могли уйти за его
+  // пределы — поэтому слушаем и на window, как это делают надёжные игры.
+  for (const type of ['touchend', 'touchcancel']) {
+    window.addEventListener(type, (event) => touchControls.touchEnd(event), { passive: false });
+  }
+}
 
 /* ------------------------- Блокировка жестов браузера ---------------------- */
 
@@ -1965,10 +2016,16 @@ function requestFullscreenOnce() {
 
 /** Подпись кнопки полного экрана под текущее состояние. */
 function fullscreenLabel() {
-  return fullscreenApi.active() ? '⛶ Выйти из полного экрана' : '⛶ Полный экран';
+  return fullscreenApi.active() ? 'Выйти из полного экрана' : 'Полный экран';
 }
 
-/** Показывает кнопку и обновляет её подпись под текущее состояние. */
+/**
+ * Обновляет иконку и подпись кнопки полного экрана.
+ *
+ * Подпись живёт в отдельном <span>, а не в самом button: иначе обновление
+ * textContent затирало бы саму иконку. Title и aria-label дублируют её для
+ * экранных дикторов и всплывающей подсказки.
+ */
 function syncFullscreenButton() {
   const button = document.getElementById('fsButton');
   if (!button) return;
@@ -1976,7 +2033,11 @@ function syncFullscreenButton() {
   // Кнопка нужна всегда: даже без нативного API она включает
   // псевдо-полный экран, то есть игра всё равно развернётся.
   button.hidden = false;
-  button.textContent = fullscreenLabel();
+  button.title = fullscreenLabel();
+  button.setAttribute('aria-label', fullscreenLabel());
+
+  const caption = button.querySelector('.fs-button__text');
+  if (caption) caption.textContent = fullscreenLabel();
 }
 
 /** Реакция на смену полноэкранного режима: обновляем подпись на кнопке. */
@@ -2095,16 +2156,22 @@ function bakeTouchArt() {
  *   • кнопка FIRE — удержание даёт непрерывный огонь;
  *   • кнопка паузы — квадрат в правом верхнем углу.
  *
- * Касания раздаются по pointerId, поэтому движение и огонь работают
- * одновременно: можно вести корабль левым пальцем и стрелять правым.
+ * МУЛЬТИТАЧ. Каждый палец получает свой identifier, и мы запоминаем:
+ *   • stickId — identifier пальца, который ведёт джойстик;
+ *   • fireIds — набор identifier'ов, зажавших кнопку огня.
+ *
+ * Это позволяет вести корабль одним пальцем и стрелять другим
+ * ОДНОВРЕМЕННО. Раньше второй палец безусловно перетирал stickId
+ * («украдывал» джойстик), и при его отпускании управление обрывалось,
+ * хотя первый палец всё ещё лежал на экране.
  */
 const touchControls = {
-  stickId: null,        // pointerId, ведущий джойстик (null — джойстик свободен)
+  stickId: null,        // identifier пальца, ведущий джойстик (null — свободен)
   stickBaseX: 0,        // центр кольца джойстика
   stickBaseY: 0,
   stickX: 0,            // текущее положение «шайбы»
   stickY: 0,
-  fireId: null,         // pointerId, удерживающий кнопку огня
+  fireIds: new Set(),   // identifier'ы пальцев, удерживающих кнопку огня
   pauseFlash: 0,        // короткая вспышка кнопки паузы после нажатия
 
   /** Центр кнопки огня. */
@@ -2117,7 +2184,7 @@ const touchControls = {
   /** Ведёт ли палец джойстик прямо сейчас. */
   stickActive() { return this.stickId !== null; },
   /** Идёт ли огонь с экранной кнопки. */
-  firing() { return this.fireId !== null; },
+  firing() { return this.fireIds.size > 0; },
 
   /** Отклонение джойстика по X в долях радиуса. */
   axisX() { return (this.stickX - this.stickBaseX) / STICK_RADIUS; },
@@ -2125,11 +2192,133 @@ const touchControls = {
   axisY() { return (this.stickY - this.stickBaseY) / STICK_RADIUS; },
 
   /**
-   * Касание экрана. Возвращает true, если касание «съедено» экранной кнопкой
-   * или джойстиком и не должно попадать в игровое поле.
+   * Касание игрового поля (событие TouchEvent).
+   *
+   * Разбираем ИМЕННО changedTouches — список пальцев, которые именно
+   * сейчас начали касание. В touchmove/touchend там тоже «изменившиеся»,
+   * поэтому один и тот же обработчик подходит для всех фаз.
+   *
+   * @param {TouchEvent} event
+   * @param {{x: number, y: number}} base точка в логических координатах
+   * @returns {boolean} true, если касание съедено интерфейсом
+   */
+  touchStart(event) {
+    for (const touch of this.changedList(event)) {
+      const point = this.touchToField(touch);
+
+      // 1. Кнопка паузы — доступна на любом экране.
+      if (Math.hypot(point.x - this.pauseX(), point.y - this.pauseY()) <= PAUSE_BUTTON_R + 12) {
+        this.pauseFlash = 0.25;
+        togglePause();
+        continue;
+      }
+
+      // 2. Кнопки меню работают и пальцем.
+      if (state.screen !== 'playing') {
+        const button = ui.buttonAt(point.x, point.y);
+        if (button) pressButton(button);
+        continue;
+      }
+
+      // 3. Кнопка огня — полностью независима от джойстика: её держит
+      //    любой палец, попавший в круг, и не мешает движению.
+      if (Math.hypot(point.x - this.fireX(), point.y - this.fireY()) <= FIRE_BUTTON_R + 14) {
+        this.fireIds.add(touch.identifier);
+        state.fireTimer = 0;                      // первый выстрел сразу
+        continue;
+      }
+
+      // 4. Джойстик занимает только СВОБОДНЫЙ палец. Если им уже
+      //    управляет кто-то другой — игнорируем, но не «украдываем».
+      if (this.stickId === null) {
+        this.stickId = touch.identifier;
+        this.stickBaseX = clamp(point.x, STICK_RADIUS, CANVAS_WIDTH - STICK_RADIUS);
+        this.stickBaseY = clamp(point.y, STICK_RADIUS, CANVAS_HEIGHT - STICK_RADIUS);
+        this.stickX = this.stickBaseX;
+        this.stickY = this.stickBaseY;
+      }
+    }
+    return true;
+  },
+
+  /** Палец поехал — тянем «шайбу» за собой, но не дальше кольца. */
+  touchMove(event) {
+    for (const touch of this.changedList(event)) {
+      if (touch.identifier !== this.stickId) continue;
+
+      const point = this.touchToField(touch);
+      let dx = point.x - this.stickBaseX;
+      let dy = point.y - this.stickBaseY;
+      const length = Math.hypot(dx, dy);
+      if (length > STICK_RADIUS) {
+        dx = (dx / length) * STICK_RADIUS;
+        dy = (dy / length) * STICK_RADIUS;
+      }
+      this.stickX = this.stickBaseX + dx;
+      this.stickY = this.stickBaseY + dy;
+    }
+  },
+
+  /** Пальцы оторвались: освобождаем ровно те, что отпустили экран. */
+  touchEnd(event) {
+    for (const touch of this.changedList(event)) {
+      if (touch.identifier === this.stickId) this.stickId = null;
+      this.fireIds.delete(touch.identifier);
+    }
+  },
+
+  /**
+   * Совместимость с Pointer Events: там тоже есть идентификатор пальца,
+   * поэтому логика та же — просто другой источник координат.
    */
   pointerDown(event, point) {
-    // 1. Кнопка паузы — доступна на любом экране.
+    return this.applyContact(event.pointerId, point);
+  },
+
+  pointerMove(event) {
+    if (event.pointerId !== this.stickId) return;
+    this.applyStickPoint(eventToField(event));
+  },
+
+  pointerUp(event) {
+    if (event.pointerId === this.stickId) this.stickId = null;
+    this.fireIds.delete(event.pointerId);
+  },
+
+  /** Отпускает всё сразу: смена экрана, потеря фокуса, пауза. */
+  releaseAll() {
+    this.stickId = null;
+    this.fireIds.clear();
+  },
+
+  /** Перевод точки касания в логические координаты поля. */
+  touchToField(touch) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (touch.clientX - rect.left) * (CANVAS_WIDTH / rect.width),
+      y: (touch.clientY - rect.top) * (CANVAS_HEIGHT / rect.height),
+    };
+  },
+
+  /**
+   * Пальцы, изменившиеся в этом событии.
+   *
+   * У настоящего TouchEvent поле changedTouches всегда есть, но полагаться
+   * на него слепо нельзя: при отменённом или синтетическом событии его может
+   * не оказаться, и игра упала бы с ошибкой. Поэтому есть запасные варианты,
+   * а в худшем случае возвращаем пустой список — игра просто ничего не делает.
+   */
+  changedList(event) {
+    if (event.changedTouches && event.changedTouches.length !== undefined) {
+      return event.changedTouches;
+    }
+    if (event.touches && event.touches.length !== undefined) return event.touches;
+    return [];
+  },
+
+  /** Единая обработка «нового контакта» для обоих API (touch и pointer). */
+  applyContact(id, point) {
+    // 1. Пауза.
     if (Math.hypot(point.x - this.pauseX(), point.y - this.pauseY()) <= PAUSE_BUTTON_R + 12) {
       this.pauseFlash = 0.25;
       togglePause();
@@ -2138,27 +2327,26 @@ const touchControls = {
 
     if (state.screen !== 'playing') return false;   // в меню поле свободно
 
-    // 2. Кнопка огня в правом нижнем углу.
+    // 2. Огонь — не зависит от джойстика.
     if (Math.hypot(point.x - this.fireX(), point.y - this.fireY()) <= FIRE_BUTTON_R + 14) {
-      this.fireId = event.pointerId;
-      state.fireTimer = 0;                          // первый выстрел сразу
+      this.fireIds.add(id);
+      state.fireTimer = 0;
       return true;
     }
 
-    // 3. Джойстик: рождается под пальцем, центр держим внутри поля.
-    this.stickId = event.pointerId;
-    this.stickBaseX = clamp(point.x, STICK_RADIUS, CANVAS_WIDTH - STICK_RADIUS);
-    this.stickBaseY = clamp(point.y, STICK_RADIUS, CANVAS_HEIGHT - STICK_RADIUS);
-    this.stickX = this.stickBaseX;
-    this.stickY = this.stickBaseY;
+    // 3. Джойстик — только если им ещё никто не владеет.
+    if (this.stickId === null) {
+      this.stickId = id;
+      this.stickBaseX = clamp(point.x, STICK_RADIUS, CANVAS_WIDTH - STICK_RADIUS);
+      this.stickBaseY = clamp(point.y, STICK_RADIUS, CANVAS_HEIGHT - STICK_RADIUS);
+      this.stickX = this.stickBaseX;
+      this.stickY = this.stickBaseY;
+    }
     return true;
   },
 
-  /** Палец поехал — тянем «шайбу» за собой, но не дальше кольца. */
-  pointerMove(event) {
-    if (event.pointerId !== this.stickId) return;
-
-    const point = eventToField(event);
+  /** Двигает «шайбу» джойстика в сторону точки, не выпуская за кольцо. */
+  applyStickPoint(point) {
     let dx = point.x - this.stickBaseX;
     let dy = point.y - this.stickBaseY;
     const length = Math.hypot(dx, dy);
@@ -2168,18 +2356,6 @@ const touchControls = {
     }
     this.stickX = this.stickBaseX + dx;
     this.stickY = this.stickBaseY + dy;
-  },
-
-  /** Палец оторвался: освобождаем джойстик или кнопку огня. */
-  pointerUp(event) {
-    if (event.pointerId === this.stickId) this.stickId = null;
-    if (event.pointerId === this.fireId) this.fireId = null;
-  },
-
-  /** Отпускает всё сразу: смена экрана, потеря фокуса, пауза. */
-  releaseAll() {
-    this.stickId = null;
-    this.fireId = null;
   },
 
   /** Рисует кнопки и джойстик поверх игрового поля. */
@@ -2958,6 +3134,11 @@ function setScreen(screen) {
   mouse.down = false;
   input.firing = false;
   if (screen === 'playing') state.touchHint = Math.max(state.touchHint, 4);
+
+  // Прячем кнопку полного экрана на время игры: поле уже занимает весь
+  // экран, а иконка в углу только мешала бы попадать по краям.
+  document.body.classList.toggle('is-playing', screen === 'playing');
+
   buildScreen(screen);
 }
 
